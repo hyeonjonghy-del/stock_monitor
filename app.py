@@ -60,42 +60,80 @@ def try_krx_login(krx_id: str, krx_pw: str) -> tuple[bool, str]:
             "```\npip install --upgrade pykrx\n```"
         )
     except Exception as e:
-        return False, f"❌ 오류: {e}"
+        err = str(e)
+        if "Expecting value" in err or "JSONDecodeError" in err:
+            return False, (
+                "❌ KRX 서버 응답 오류\n\n"
+                "KRX 서버가 일시적으로 응답하지 않습니다.\n"
+                "1~2분 후 다시 시도하거나, "
+                "[data.krx.co.kr](https://data.krx.co.kr) 접속이 되는지 확인하세요."
+            )
+        return False, f"❌ 로그인 오류: {e}"
 
+
+# ─── Streamlit Secrets 자동 로그인 ───────────────────────────────────────────
+def auto_login_from_secrets():
+    """Streamlit Secrets에 KRX_ID/KRX_PW가 있으면 자동 로그인"""
+    if st.session_state.get("krx_ok"):
+        return  # 이미 로그인됨
+    try:
+        secret_id = st.secrets.get("KRX_ID", "")
+        secret_pw = st.secrets.get("KRX_PW", "")
+        if secret_id and secret_pw:
+            ok, msg = try_krx_login(secret_id, secret_pw)
+            st.session_state["krx_ok"] = ok
+            st.session_state["krx_msg"] = msg
+            st.session_state["krx_from_secrets"] = True
+    except Exception:
+        pass  # Secrets 없으면 수동 로그인으로 진행
+
+auto_login_from_secrets()
 
 # ─── 사이드바 ──────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("⚙️ 검색 조건")
 
-    with st.expander("🔐 KRX 로그인 (필수)", expanded=True):
-        st.markdown(
-            "[data.krx.co.kr](https://data.krx.co.kr) 무료 회원가입 후 입력"
-        )
-        krx_id = st.text_input("KRX 아이디", placeholder="아이디")
-        krx_pw = st.text_input("KRX 비밀번호", type="password", placeholder="비밀번호")
-
-        if st.button("🔓 로그인", key="btn_login"):
-            if not krx_id or not krx_pw:
-                st.warning("아이디와 비밀번호를 입력하세요.")
+    # Secrets로 자동 로그인된 경우 로그인 UI 간소화
+    if st.session_state.get("krx_from_secrets"):
+        with st.expander("🔐 KRX 로그인 (필수)", expanded=False):
+            if st.session_state.get("krx_ok"):
+                st.success("🟢 자동 로그인됨 (Secrets)")
             else:
-                with st.spinner("로그인 중..."):
-                    ok, msg = try_krx_login(krx_id, krx_pw)
-                    st.session_state["krx_ok"] = ok
-                    st.session_state["krx_msg"] = msg
-
-        # 상태 표시
-        if st.session_state.get("krx_ok"):
-            st.success("🟢 로그인됨")
+                st.error(st.session_state.get("krx_msg", "자동 로그인 실패"))
+                st.info("Streamlit Cloud → App settings → Secrets에서 KRX_ID / KRX_PW 확인하세요.")
             if st.button("🔄 캐시 초기화", key="btn_clear",
-                         help="로그인 후에도 데이터가 안 나올 때 클릭"):
+                         help="데이터가 안 나올 때 클릭"):
                 st.cache_data.clear()
-                st.toast("✅ 캐시 초기화 완료! 검색을 다시 실행하세요.")
-        else:
-            msg = st.session_state.get("krx_msg", "")
-            if msg:
-                st.error(msg)
+                st.toast("✅ 캐시 초기화 완료!")
+    else:
+        with st.expander("🔐 KRX 로그인 (필수)", expanded=True):
+            st.markdown(
+                "[data.krx.co.kr](https://data.krx.co.kr) 무료 회원가입 후 입력"
+            )
+            krx_id = st.text_input("KRX 아이디", placeholder="아이디")
+            krx_pw = st.text_input("KRX 비밀번호", type="password", placeholder="비밀번호")
+
+            if st.button("🔓 로그인", key="btn_login"):
+                if not krx_id or not krx_pw:
+                    st.warning("아이디와 비밀번호를 입력하세요.")
+                else:
+                    with st.spinner("로그인 중..."):
+                        ok, msg = try_krx_login(krx_id, krx_pw)
+                        st.session_state["krx_ok"] = ok
+                        st.session_state["krx_msg"] = msg
+
+            if st.session_state.get("krx_ok"):
+                st.success("🟢 로그인됨")
+                if st.button("🔄 캐시 초기화", key="btn_clear",
+                             help="로그인 후에도 데이터가 안 나올 때 클릭"):
+                    st.cache_data.clear()
+                    st.toast("✅ 캐시 초기화 완료! 검색을 다시 실행하세요.")
             else:
-                st.warning("🔴 미로그인")
+                msg = st.session_state.get("krx_msg", "")
+                if msg:
+                    st.error(msg)
+                else:
+                    st.warning("🔴 미로그인")
 
     st.divider()
     selected_markets = st.multiselect(
